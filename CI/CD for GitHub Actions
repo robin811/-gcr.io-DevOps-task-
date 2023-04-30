@@ -1,0 +1,88 @@
++GCP using Service Account
+
+deploy:
+  image: google/cloud-sdk
+  script:
+    - echo $GCP_SA_KEY | base64 -d > /tmp/$CI_PIPELINE_ID.json
+    - gcloud auth activate-service-account --key-file /tmp/$CI_PIPELINE_ID.json
+    - gcloud config set project $GCP_PROJECT_ID
+    - gcloud container clusters get-credentials $GCP_CLUSTER_NAME --zone $GCP_ZONE --project $GCP_PROJECT_ID
+    - kubectl apply -f deployment.yaml
+    
+    
+    +microservice using Docker:
+    
+    
+   trigger:
+- master
+
+pool:
+  vmImage: 'ubuntu-latest'
+  
+- task: Docker@2
+  inputs:
+    containerRegistry: 'ACR'
+    repository: 'myrepo'
+    command: 'build'
+    Dockerfile: '**/Dockerfile'
+    
+    
+    +Push Docker image:
+    
+     stage: deploy
+  image: google/cloud-sdk:latest
+  script:
+    - gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS
+    - gcloud container clusters get-credentials $CLUSTER_NAME --zone $ZONE --project $PROJECT_ID
+    - helm upgrade --install my-release ./my-chart --namespace my-namespace --set image.tag=$CI_COMMIT_SHA
+    
+    
+    +Deployment:
+    
+    on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    - name: Login to Google Cloud
+      uses: google-github-actions/setup-gcloud@master
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
+
+    - name: Build Docker images
+      run: |
+        docker build -t gcr.io/${{ secrets.GCP_PROJECT_ID }}/my-image-1:${{ github.sha }} ./my-image-1
+        docker build -t gcr.io/${{ secrets.GCP_PROJECT_ID }}/my-image-2:${{ github.sha }} ./my-image-2
+
+    - name: Push Docker images to Google Container Registry
+      run: |
+        docker push gcr.io/${{ secrets.GCP_PROJECT_ID }}/my-image-1:${{ github.sha }}
+        docker push gcr.io/${{ secrets.GCP_PROJECT_ID }}/my-image-2:${{ github.sha }}
+
+  deploy:
+    needs: build
+
+    runs-on: ubuntu-latest
+
+    - name: Login to Google Cloud
+      uses: google-github-actions/setup-gcloud@master
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
+
+    - name: Install HELM
+      run: |
+        wget https://get.helm.sh/helm-v3.7.0-linux-amd64.tar.gz
+        tar xvf helm-v3.7.0-linux-amd64.tar.gz
+        sudo mv linux-amd64/helm /usr/local/bin/helm
+
+    - name: Deploy services using HELM
+      run: |
+        helm upgrade --install my-release ./my-chart --namespace my-namespace --set image.tag=$GITHUB_SHA
